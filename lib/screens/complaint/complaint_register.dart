@@ -1,29 +1,42 @@
+import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:geocoding/geocoding.dart';
-import 'dart:io';
-import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
 import 'dart:convert';
+import 'package:civic_care/constants/api_constants.dart';
+import 'package:civic_care/constants/api_service.dart'; // ✅ ApiClient
 
 class RegisterComplaintScreen extends StatefulWidget {
+  const RegisterComplaintScreen({super.key});
+
   @override
-  _RegisterComplaintScreenState createState() => _RegisterComplaintScreenState();
+  State<RegisterComplaintScreen> createState() =>
+      _RegisterComplaintScreenState();
 }
 
 class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
-  static const String uuid = '1f08a9f9-8ad9-627f-bf51-83003d454b1c';
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
   final TextEditingController _addressController = TextEditingController();
 
-  String? _selectedComplaintType;
-  List<String> _ComplaintCategory = [];
-  List<File> _selectedImages = [];
+  Map<String, dynamic>? _selectedComplaintCategory;
+  List<Map<String, dynamic>> _complaintCategory = [];
+
+  File? _selectedImage; // for mobile
+  Uint8List? _selectedWebImage; // for web
+
   bool _isLoadingLocation = false;
   String _currentAddress = '';
   bool _isLoadingTypes = true;
+
+  double? _latitude;
+  double? _longitude;
+
+  final Dio _dio = ApiClient().dio; // ✅ use ApiClient
 
   @override
   void initState() {
@@ -41,37 +54,154 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
 
   Future<void> _fetchComplaintCategory() async {
     try {
-      final response = await http.get(Uri.parse(
-          'https://b020c449a310.ngrok-free.app/')); // replace with your API
+      final response =
+          await _dio.get("${baseUrl}core/dropdown/", queryParameters: {
+        "uuid": uuid,
+      });
+
       if (response.statusCode == 200) {
-        List<dynamic> data = json.decode(response.body);
+        List<dynamic> data = response.data;
         setState(() {
-          _ComplaintCategory = data.map((e) => e.toString()).toList();
+          _complaintCategory = data
+              .map<Map<String, dynamic>>(
+                  (e) => {"id": e["id"], "label": e["label"]})
+              .toList();
           _isLoadingTypes = false;
         });
       } else {
         setState(() {
-          _ComplaintCategory = [];
+          _complaintCategory = [];
           _isLoadingTypes = false;
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to fetch complaint types'),
+          const SnackBar(
+            content: Text("Failed to fetch complaint types"),
             backgroundColor: Colors.red,
           ),
         );
       }
     } catch (e) {
       setState(() {
-        _ComplaintCategory = [];
+        _complaintCategory = [];
         _isLoadingTypes = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error fetching complaint types: ${e.toString()}'),
+          content: Text("Error fetching complaint types: $e"),
           backgroundColor: Colors.red,
         ),
       );
+    }
+  }
+
+  Future<void> _submitComplaint() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final title = _titleController.text.trim();
+      final description = _descriptionController.text.trim();
+      final address = _addressController.text.trim().isNotEmpty
+          ? _addressController.text.trim()
+          : _currentAddress;
+
+      final formData = FormData.fromMap({
+        "title": title,
+        "description": description,
+        "longitude": _longitude?.toString() ?? "",
+        "latitude": _latitude?.toString() ?? "",
+        "address": address,
+        "category": _selectedComplaintCategory?["id"].toString() ?? "",
+      });
+
+      if (!kIsWeb && _selectedImage != null) {
+        formData.files.add(MapEntry(
+          "image",
+          await MultipartFile.fromFile(_selectedImage!.path),
+        ));
+      } else if (kIsWeb && _selectedWebImage != null) {
+        formData.files.add(MapEntry(
+          "image",
+          MultipartFile.fromBytes(_selectedWebImage!, filename: "complaint.jpg"),
+        ));
+      }
+
+      final response =
+          await _dio.post("${baseUrl}core/complaint/", data: formData);
+
+      if (!mounted) return;
+      Navigator.of(context).pop(); // close loader
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Complaint submitted successfully!"),
+            backgroundColor: Colors.green,
+          ),
+        );
+        Navigator.of(context).pop(); // go back
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Failed to submit complaint: ${response.data}"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  Future<void> _getCurrentLocation() async {
+    setState(() => _isLoadingLocation = true);
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      setState(() {
+        _latitude = position.latitude;
+        _longitude = position.longitude;
+        _isLoadingLocation = false;
+        _addressController.text = "Lat: $_latitude, Lon: $_longitude";
+      });
+    } catch (e) {
+      setState(() => _isLoadingLocation = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Failed to get location: $e"),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _pickImage() async {
+    final ImagePicker picker = ImagePicker();
+    final XFile? pickedFile =
+        await picker.pickImage(source: ImageSource.gallery);
+
+    if (pickedFile != null) {
+      if (kIsWeb) {
+        Uint8List bytes = await pickedFile.readAsBytes();
+        setState(() {
+          _selectedWebImage = bytes;
+          _selectedImage = null;
+        });
+      } else {
+        setState(() {
+          _selectedImage = File(pickedFile.path);
+          _selectedWebImage = null;
+        });
+      }
     }
   }
 
@@ -83,27 +213,13 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
         backgroundColor: Colors.white,
         elevation: 1,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: Colors.black),
+          icon: const Icon(Icons.arrow_back, color: Colors.black),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: Text(
-          'Register Complaint',
-          style: TextStyle(
-            color: Colors.black,
-            fontSize: 18,
-            fontWeight: FontWeight.w500,
-          ),
+        title: const Text(
+          "Register Complaint",
+          style: TextStyle(color: Colors.black, fontSize: 18),
         ),
-        actions: [
-          Padding(
-            padding: EdgeInsets.only(right: 16),
-            child: CircleAvatar(
-              radius: 18,
-              backgroundColor: Colors.blue[100],
-              child: Icon(Icons.person, color: Colors.blue, size: 20),
-            ),
-          ),
-        ],
       ),
       body: Form(
         key: _formKey,
@@ -111,35 +227,35 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
           children: [
             Expanded(
               child: SingleChildScrollView(
-                padding: EdgeInsets.all(16),
+                padding: const EdgeInsets.all(16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _buildInputField(
-                      label: 'Complaint Title',
+                      label: "Complaint Title",
                       controller: _titleController,
                       isRequired: true,
                     ),
-                    SizedBox(height: 16),
+                    const SizedBox(height: 16),
                     _buildInputField(
-                      label: 'Complaint Description',
+                      label: "Complaint Description",
                       controller: _descriptionController,
                       maxLines: 4,
                       isRequired: true,
                     ),
-                    SizedBox(height: 20),
+                    const SizedBox(height: 20),
                     _buildAddressSection(),
-                    SizedBox(height: 20),
+                    const SizedBox(height: 20),
                     _buildComplaintTypeDropdown(),
-                    SizedBox(height: 20),
+                    const SizedBox(height: 20),
                     _buildAttachmentSection(),
-                    SizedBox(height: 20),
+                    const SizedBox(height: 20),
                   ],
                 ),
               ),
             ),
             Container(
-              padding: EdgeInsets.all(16),
+              padding: const EdgeInsets.all(16),
               color: Colors.white,
               child: Row(
                 children: [
@@ -147,40 +263,38 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
                     child: OutlinedButton(
                       onPressed: () => Navigator.of(context).pop(),
                       style: OutlinedButton.styleFrom(
-                        padding: EdgeInsets.symmetric(vertical: 12),
-                        side: BorderSide(color: Colors.orange),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        side: const BorderSide(color: Colors.orange),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),
                       ),
-                      child: Text(
-                        'Cancel',
+                      child: const Text(
+                        "Cancel",
                         style: TextStyle(
-                          color: Colors.orange,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
+                            color: Colors.orange,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500),
                       ),
                     ),
                   ),
-                  SizedBox(width: 12),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: ElevatedButton(
                       onPressed: _submitComplaint,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.green,
-                        padding: EdgeInsets.symmetric(vertical: 12),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),
                       ),
-                      child: Text(
-                        'Submit',
+                      child: const Text(
+                        "Submit",
                         style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500),
                       ),
                     ),
                   ),
@@ -190,7 +304,6 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
           ],
         ),
       ),
-      bottomNavigationBar: _buildBottomNavigationBar(),
     );
   }
 
@@ -212,43 +325,24 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
               fontWeight: FontWeight.w500,
             ),
             children: isRequired
-                ? [
-                    TextSpan(
-                      text: ' *',
-                      style: TextStyle(color: Colors.red),
-                    ),
-                  ]
+                ? [const TextSpan(text: " *", style: TextStyle(color: Colors.red))]
                 : [],
           ),
         ),
-        SizedBox(height: 8),
+        const SizedBox(height: 8),
         TextFormField(
           controller: controller,
           maxLines: maxLines,
           validator: isRequired
-              ? (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return '$label is required';
-                  }
-                  return null;
-                }
+              ? (value) =>
+                  (value == null || value.trim().isEmpty) ? "$label is required" : null
               : null,
           decoration: InputDecoration(
             fillColor: Colors.white,
             filled: true,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide(color: Colors.grey[300]!),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide(color: Colors.grey[300]!),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide(color: Colors.blue, width: 2),
-            ),
-            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           ),
         ),
       ],
@@ -256,160 +350,60 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
   }
 
   Widget _buildAddressSection() {
-    return Container(
-      padding: EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey[300]!),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.location_on, color: Colors.red, size: 20),
-              SizedBox(width: 8),
-              Text(
-                'Add Address',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black87,
-                ),
-              ),
-              SizedBox(width: 8),
-              Container(
-                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.red,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  'VERY IMPORTANT',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        OutlinedButton.icon(
+          onPressed: _isLoadingLocation ? null : _getCurrentLocation,
+          icon: _isLoadingLocation
+              ? const SizedBox(
+                  width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.my_location, color: Colors.blue),
+          label: Text(
+            _isLoadingLocation ? "Getting Location..." : "Use Current Location",
           ),
-          SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: _isLoadingLocation ? null : _getCurrentLocation,
-              icon: _isLoadingLocation
-                  ? SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.blue),
-                      ),
-                    )
-                  : Icon(Icons.my_location, color: Colors.blue),
-              label: Text(
-                _isLoadingLocation ? 'Getting Location...' : 'Use Current Location',
-                style: TextStyle(color: Colors.blue),
-              ),
-              style: OutlinedButton.styleFrom(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                side: BorderSide(color: Colors.blue),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-            ),
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: _addressController,
+          maxLines: 3,
+          validator: (value) {
+            if ((value == null || value.trim().isEmpty) &&
+                _currentAddress.isEmpty) {
+              return "Address is required";
+            }
+            return null;
+          },
+          decoration: InputDecoration(
+            hintText: _currentAddress.isEmpty ? "Enter address" : _currentAddress,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
           ),
-          SizedBox(height: 12),
-          TextFormField(
-            controller: _addressController,
-            maxLines: 3,
-            validator: (value) {
-              if ((value == null || value.trim().isEmpty) &&
-                  _currentAddress.isEmpty) {
-                return 'Address is required. Please enter manually or use current location.';
-              }
-              return null;
-            },
-            decoration: InputDecoration(
-              hintText: _currentAddress.isEmpty
-                  ? 'Enter your address manually or use current location'
-                  : _currentAddress,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: Colors.grey[300]!),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: Colors.grey[300]!),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: Colors.blue, width: 2),
-              ),
-              contentPadding: EdgeInsets.all(12),
-            ),
-          ),
-          if (_currentAddress.isNotEmpty) ...[
-            SizedBox(height: 8),
-            Container(
-              padding: EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.green[50],
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: Colors.green[200]!),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.check_circle, color: Colors.green, size: 16),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Current Location: $_currentAddress',
-                      style: TextStyle(
-                        color: Colors.green[800],
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ],
-      ),
+        ),
+      ],
     );
   }
 
   Widget _buildComplaintTypeDropdown() {
     if (_isLoadingTypes) {
-      return Center(child: CircularProgressIndicator());
+      return const Center(child: CircularProgressIndicator());
     }
-    return DropdownButtonFormField<String>(
-      value: _selectedComplaintType,
+    return DropdownButtonFormField<Map<String, dynamic>>(
+      value: _selectedComplaintCategory,
       decoration: InputDecoration(
-        labelText: 'Complaint Category *',
+        labelText: "Complaint Category *",
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
         filled: true,
         fillColor: Colors.white,
       ),
-      items: _ComplaintCategory
-          .map((type) => DropdownMenuItem(
-                value: type,
-                child: Text(type),
+      items: _complaintCategory
+          .map((cat) => DropdownMenuItem<Map<String, dynamic>>(
+                value: cat,
+                child: Text(cat["label"]),
               ))
           .toList(),
-      onChanged: (value) {
-        setState(() {
-          _selectedComplaintType = value;
-        });
-      },
+      onChanged: (value) => setState(() => _selectedComplaintCategory = value),
       validator: (value) =>
-          value == null || value.isEmpty ? 'Please select complaint category' : null,
+          value == null ? "Please select complaint category" : null,
     );
   }
 
@@ -417,253 +411,36 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Attach Photos/Videos',
-          style: TextStyle(
-            color: Colors.grey[600],
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        SizedBox(height: 8),
+        const Text("Attach Photo", style: TextStyle(fontWeight: FontWeight.w500)),
+        const SizedBox(height: 8),
         GestureDetector(
-          onTap: _pickImages,
+          onTap: _pickImage,
           child: Container(
             width: double.infinity,
             height: 120,
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.grey[300]!, style: BorderStyle.solid),
+              border: Border.all(color: Colors.grey[300]!),
             ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.add,
-                  size: 40,
-                  color: Colors.grey[400],
-                ),
-                SizedBox(height: 8),
-                Text(
-                  'Upload Photos/Videos',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 14,
-                  ),
-                ),
-              ],
+            child: Center(
+              child: _selectedImage != null
+                  ? Image.file(_selectedImage!, fit: BoxFit.cover)
+                  : _selectedWebImage != null
+                      ? Image.memory(_selectedWebImage!, fit: BoxFit.cover)
+                      : Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.add, size: 40, color: Colors.grey[400]),
+                            const SizedBox(height: 8),
+                            Text("Upload Photo",
+                                style: TextStyle(color: Colors.grey[600])),
+                          ],
+                        ),
             ),
           ),
         ),
-        if (_selectedImages.isNotEmpty) ...[
-          SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _selectedImages.asMap().entries.map((entry) {
-              int index = entry.key;
-              File image = entry.value;
-              return Stack(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.file(
-                      image,
-                      width: 80,
-                      height: 80,
-                      fit: BoxFit.cover,
-                    ),
-                  ),
-                  Positioned(
-                    top: 4,
-                    right: 4,
-                    child: GestureDetector(
-                      onTap: () => _removeImage(index),
-                      child: Container(
-                        padding: EdgeInsets.all(2),
-                        decoration: BoxDecoration(
-                          color: Colors.red,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          Icons.close,
-                          color: Colors.white,
-                          size: 16,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              );
-            }).toList(),
-          ),
-        ],
       ],
     );
   }
-
-  Widget _buildBottomNavigationBar() {
-    return BottomNavigationBar(
-      type: BottomNavigationBarType.fixed,
-      items: [
-        BottomNavigationBarItem(icon: Icon(Icons.home_outlined), label: ''),
-        BottomNavigationBarItem(icon: Icon(Icons.account_balance_outlined), label: ''),
-        BottomNavigationBarItem(icon: Icon(Icons.receipt_long_outlined), label: ''),
-        BottomNavigationBarItem(icon: Icon(Icons.notifications_outlined), label: ''),
-        BottomNavigationBarItem(icon: Icon(Icons.person_outline), label: ''),
-      ],
-      selectedItemColor: Colors.blue,
-      unselectedItemColor: Colors.grey,
-      showSelectedLabels: false,
-      showUnselectedLabels: false,
-    );
-  }
-
-  void _submitComplaint() async {
-    if (_formKey.currentState?.validate() ?? false) {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => Center(child: CircularProgressIndicator()),
-      );
-
-      try {
-        final title = _titleController.text.trim();
-        final description = _descriptionController.text.trim();
-        final address = _addressController.text.trim().isNotEmpty
-            ? _addressController.text.trim()
-            : _currentAddress;
-        final complaintType = _selectedComplaintType;
-
-        var request = http.MultipartRequest(
-          'POST',
-          Uri.parse('https://b020c449a310.ngrok-free.app/'), // replace with your API
-        );
-        request.fields['title'] = title;
-        request.fields['description'] = description;
-        request.fields['address'] = address;
-        request.fields['complaintType'] = complaintType ?? '';
-        request.fields['uuid'] = uuid; // <-- Add static uuid here
-
-
-        for (var imageFile in _selectedImages) {
-          request.files.add(await http.MultipartFile.fromPath(
-            'attachments',
-            imageFile.path,
-          ));
-        }
-
-        var response = await request.send();
-
-        Navigator.of(context).pop();
-
-        if (response.statusCode == 200) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Complaint submitted successfully!'),
-              backgroundColor: Colors.green,
-            ),
-          );
-          Navigator.of(context).pop();
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Failed to submit complaint.'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      } catch (e) {
-        Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  void _removeImage(int index) {
-    setState(() {
-      _selectedImages.removeAt(index);
-    });
-  }
-
-  // ...existing code...
-  
-  Future<void> _getCurrentLocation() async {
-    setState(() {
-      _isLoadingLocation = true;
-    });
-    try {
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-      List<Placemark> placemarks = await placemarkFromCoordinates(
-        position.latitude,
-        position.longitude,
-      );
-      String address = placemarks.isNotEmpty
-          ? "${placemarks.first.street}, ${placemarks.first.locality}, ${placemarks.first.administrativeArea}, ${placemarks.first.country}"
-          : "${position.latitude}, ${position.longitude}";
-      setState(() {
-        _currentAddress = address;
-        _addressController.text = address;
-        _isLoadingLocation = false;
-      });
-    } catch (e) {
-      setState(() {
-        _isLoadingLocation = false;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to get location: ${e.toString()}'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-Future<void> _pickImages() async {
-  showModalBottomSheet(
-    context: context,
-    builder: (context) => SafeArea(
-      child: Wrap(
-        children: [
-          ListTile(
-            leading: Icon(Icons.camera_alt),
-            title: Text('Take Photo'),
-            onTap: () async {
-              Navigator.of(context).pop();
-              final ImagePicker picker = ImagePicker();
-              final XFile? photo = await picker.pickImage(source: ImageSource.camera);
-              if (photo != null) {
-                setState(() {
-                  _selectedImages.add(File(photo.path));
-                });
-              }
-            },
-          ),
-          ListTile(
-            leading: Icon(Icons.photo_library),
-            title: Text('Choose from Gallery'),
-            onTap: () async {
-              Navigator.of(context).pop();
-              final ImagePicker picker = ImagePicker();
-              final List<XFile>? pickedFiles = await picker.pickMultiImage();
-              if (pickedFiles != null && pickedFiles.isNotEmpty) {
-                setState(() {
-                  _selectedImages.addAll(pickedFiles.map((xfile) => File(xfile.path)));
-                });
-              }
-            },
-          ),
-        ],
-      ),
-    ),
-  );
-}
 }

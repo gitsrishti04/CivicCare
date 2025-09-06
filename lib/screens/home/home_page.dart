@@ -7,6 +7,7 @@ import 'package:civic_care/screens/community/community_page.dart';
 import 'package:civic_care/screens/profile/profile_page.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:civic_care/constants/api_constants.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
