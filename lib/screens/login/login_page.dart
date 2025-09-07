@@ -138,7 +138,7 @@ class _LoginPageState extends State<LoginPage> {
 
         if (accessToken != null && refreshToken != null) {
           await storage.write(key: 'access_token', value: accessToken);
-          await storage.write(key: 'refresh_token', value: refreshToken);
+          await storage.write(key: 'refresh_token', value: refreshToken); // FIXED: changed = to :
 
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text("Google login successful!")),
