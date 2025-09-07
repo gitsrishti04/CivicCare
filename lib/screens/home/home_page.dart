@@ -1,5 +1,13 @@
+import 'package:civic_care/screens/profile/profile_page.dart';
 import 'package:flutter/material.dart';
-import 'package:civic_care/screens/complaint/complaint_register.dart'; // 🔹 Update with your package path
+import 'package:civic_care/screens/complaint/complaint_register.dart';
+import 'package:civic_care/screens/complaint/track_complaint.dart';
+import 'package:civic_care/screens/complaint/complaint_history.dart';
+import 'package:civic_care/screens/community/community_page.dart';
+import 'package:civic_care/screens/profile/profile_page.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
+import 'package:civic_care/constants/api_constants.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -10,7 +18,67 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
+  String _locationText = "Fetching location...";
 
+  @override
+  void initState() {
+    super.initState();
+    _fetchLocation();
+  }
+
+  // ...existing code...
+
+  Future<void> _fetchLocation() async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        setState(() {
+          _locationText = "Location services disabled";
+        });
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied ||
+            permission == LocationPermission.deniedForever) {
+          setState(() {
+            _locationText = "Location permission denied";
+          });
+          return;
+        }
+      }
+
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      List<Placemark> placemarks = await placemarkFromCoordinates(
+        position.latitude,
+        position.longitude,
+      );
+
+      if (placemarks.isNotEmpty) {
+        final place = placemarks.first;
+        setState(() {
+          _locationText =
+              "${place.locality ?? ''}, ${place.administrativeArea ?? ''}";
+        });
+      } else {
+        setState(() {
+          _locationText = "Location not found";
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _locationText = "Error fetching location";
+      });
+    }
+  }
+
+// ...existing code...
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
@@ -20,10 +88,18 @@ class _HomePageState extends State<HomePage> {
       case 1: // Complaints tab
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) =>  RegisterComplaintScreen()),
+          MaterialPageRoute(builder: (context) => RegisterComplaintScreen()),
         );
         break;
-      // You can add navigation for other tabs here if needed
+      case 2: // Communities tab
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => CommunityPage()),
+        );
+        break;
+      case 3: // Profile tab
+        Navigator.push(context, MaterialPageRoute(builder:(context) => ProfilePage(),));
+      // Add navigation for other tabs if needed
     }
   }
 
@@ -32,7 +108,7 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       backgroundColor: Colors.grey[100],
 
-      // Top AppBar with back button
+      // Top AppBar
       appBar: AppBar(
         backgroundColor: Colors.blue.shade800,
         title: const Text(
@@ -72,7 +148,12 @@ class _HomePageState extends State<HomePage> {
                   ),
                   const SizedBox(width: 10),
                   const Icon(Icons.location_on, color: Colors.red),
-                  const Text("Amreli, Gujarat"),
+                  Flexible(
+                    child: Text(
+                      _locationText,
+                      style: const TextStyle(fontWeight: FontWeight.w500),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -102,10 +183,49 @@ class _HomePageState extends State<HomePage> {
                 childAspectRatio: 1.3,
                 physics: const NeverScrollableScrollPhysics(),
                 children: [
-                  _buildBlock(Icons.add_circle, "Register Complaint"),
-                  _buildBlock(Icons.track_changes, "Track Complaint"),
-                  _buildBlock(Icons.history, "My Complaint History"),
-                  _buildBlock(Icons.list_alt, "Department List"),
+                  _buildBlock(
+                    icon: Icons.add_circle,
+                    title: "Register Complaint",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => RegisterComplaintScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  _buildBlock(
+                    icon: Icons.track_changes,
+                    title: "Track Complaint",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => TrackComplaintPage(),
+                        ),
+                      );
+                    },
+                  ),
+                  _buildBlock(
+                    icon: Icons.history,
+                    title: "My Complaint History",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => MyComplaintHistoryPage(),
+                        ),
+                      );
+                    },
+                  ),
+                  _buildBlock(
+                    icon: Icons.list_alt,
+                    title: "Department List",
+                    onTap: () {
+                      // Navigate to Department List Page
+                    },
+                  ),
                 ],
               ),
             ),
@@ -131,30 +251,37 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildBlock(IconData icon, String title) {
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.shade300,
-            blurRadius: 5,
-            offset: const Offset(2, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 40, color: Colors.blue.shade800),
-          const SizedBox(height: 10),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontWeight: FontWeight.w500),
-          ),
-        ],
+  Widget _buildBlock({
+    required IconData icon,
+    required String title,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.shade300,
+              blurRadius: 5,
+              offset: const Offset(2, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 40, color: Colors.blue.shade800),
+            const SizedBox(height: 10),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontWeight: FontWeight.w500),
+            ),
+          ],
+        ),
       ),
     );
   }

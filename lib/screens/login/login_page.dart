@@ -3,7 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_signin_button/flutter_signin_button.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:dio/dio.dart';
+import 'package:civic_care/constants/api_constants.dart';
+import 'package:civic_care/constants/api_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({Key? key}) : super(key: key);
@@ -13,14 +14,13 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final String baseUrl = "https://10.21.99.118:8000"; // 🔹 Replace with your server
   final TextEditingController _mobileController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
   static final GoogleSignIn _googleSignIn = GoogleSignIn(scopes: ['email']);
   final FlutterSecureStorage storage = const FlutterSecureStorage();
 
-  final Dio dio = Dio();
+  final ApiClient apiClient = ApiClient(); // ✅ use our ApiClient
 
   bool _isLoading = false;
 
@@ -53,15 +53,12 @@ class _LoginPageState extends State<LoginPage> {
     setState(() => _isLoading = true);
 
     try {
-      final response = await dio.post(
-        '$baseUrl/core/api/token/', // Django endpoint for JWT login
+      final response = await apiClient.dio.post(
+        '${baseUrl}core/api/token/', // Django endpoint for JWT login
         data: {
           "phone_number": mobile,
           "password": password,
         },
-        options: Options(
-          headers: {"Content-Type": "application/json"},
-        ),
       );
 
       if (!mounted) return;
@@ -88,28 +85,18 @@ class _LoginPageState extends State<LoginPage> {
         }
       } else {
         String errorMessage = "Invalid credentials or server error.";
-        try {
-          if (response.data is Map<String, dynamic>) {
-            errorMessage = response.data['detail'] ??
-                response.data['message'] ??
-                "Invalid credentials.";
-          }
-        } catch (_) {}
+        if (response.data is Map<String, dynamic>) {
+          errorMessage = response.data['detail'] ??
+              response.data['message'] ??
+              "Invalid credentials.";
+        }
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(errorMessage)));
       }
-    } on DioError catch (e) {
-      String message = "Login failed. Please try again.";
-      if (e.response != null) {
-        message = e.response?.data['detail'] ??
-            e.response?.data['message'] ??
-            message;
-      }
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(message)));
     } catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text("An error occurred: $e")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Login failed: $e")),
+      );
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -139,12 +126,9 @@ class _LoginPageState extends State<LoginPage> {
         return;
       }
 
-      final response = await dio.post(
+      final response = await apiClient.dio.post(
         '$baseUrl/api/google-login/', // Django backend endpoint
         data: {"id_token": idToken},
-        options: Options(
-          headers: {"Content-Type": "application/json"},
-        ),
       );
 
       if (response.statusCode == 200) {
@@ -154,7 +138,7 @@ class _LoginPageState extends State<LoginPage> {
 
         if (accessToken != null && refreshToken != null) {
           await storage.write(key: 'access_token', value: accessToken);
-          await storage.write(key: 'refresh_token', value: refreshToken);
+          await storage.write(key: 'refresh_token', value: refreshToken); // FIXED: changed = to :
 
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text("Google login successful!")),
@@ -174,18 +158,10 @@ class _LoginPageState extends State<LoginPage> {
           ),
         );
       }
-    } on DioError catch (e) {
-      String message = "Google login failed. Please try again.";
-      if (e.response != null) {
-        message = e.response?.data['detail'] ??
-            e.response?.data['message'] ??
-            message;
-      }
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(message)));
     } catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text("An error occurred: $e")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Google login failed: $e")),
+      );
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

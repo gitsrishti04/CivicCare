@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:dio/dio.dart';
+import 'package:civic_care/constants/api_constants.dart';
 
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
@@ -11,7 +12,7 @@ class RegisterPage extends StatefulWidget {
 }
 
 class _RegisterPageState extends State<RegisterPage> {
-  final String baseUrl = "https://10.21.99.118:8000"; // Replace with your server
+
 
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
@@ -77,7 +78,7 @@ class _RegisterPageState extends State<RegisterPage> {
     try {
       // Registration API
       final regResponse = await dio.post(
-        '$baseUrl/core/register/',
+        '${baseUrl}core/register/',
         data: {
           "name": name,
           "email": email,
@@ -92,7 +93,7 @@ class _RegisterPageState extends State<RegisterPage> {
       if (regResponse.statusCode == 201) {
         // Auto-login after registration
         final loginResponse = await dio.post(
-          '$baseUrl/core/api/token/',
+          '${baseUrl}core/api/token/',
           data: {"phone_number": phone, "password": password},
           options: Options(headers: {"Content-Type": "application/json"}),
         );
