@@ -1,13 +1,12 @@
+import 'package:civic_care/screens/complaint/nearby_complaints.dart';
 import 'package:civic_care/screens/profile/profile_page.dart';
 import 'package:flutter/material.dart';
 import 'package:civic_care/screens/complaint/complaint_register.dart';
 import 'package:civic_care/screens/complaint/track_complaint.dart';
 import 'package:civic_care/screens/complaint/complaint_history.dart';
 import 'package:civic_care/screens/community/community_page.dart';
-import 'package:civic_care/screens/profile/profile_page.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
-import 'package:civic_care/constants/api_constants.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -78,7 +77,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-// ...existing code...
+  // ...existing code...
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
@@ -98,7 +97,10 @@ class _HomePageState extends State<HomePage> {
         );
         break;
       case 3: // Profile tab
-        Navigator.push(context, MaterialPageRoute(builder:(context) => ProfilePage(),));
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => ProfilePage()),
+        );
       // Add navigation for other tabs if needed
     }
   }
@@ -221,8 +223,14 @@ class _HomePageState extends State<HomePage> {
                   ),
                   _buildBlock(
                     icon: Icons.list_alt,
-                    title: "Department List",
+                    title: "Nearby Complaints",
                     onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => NearbyComplaintsPage(),
+                        ),
+                      );
                       // Navigate to Department List Page
                     },
                   ),
@@ -243,8 +251,14 @@ class _HomePageState extends State<HomePage> {
         onTap: _onItemTapped,
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: "Home"),
-          BottomNavigationBarItem(icon: Icon(Icons.report_problem), label: "Complaints"),
-          BottomNavigationBarItem(icon: Icon(Icons.apartment), label: "Communities"),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.report_problem),
+            label: "Complaints",
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.apartment),
+            label: "Communities",
+          ),
           BottomNavigationBarItem(icon: Icon(Icons.person), label: "Profile"),
         ],
       ),
