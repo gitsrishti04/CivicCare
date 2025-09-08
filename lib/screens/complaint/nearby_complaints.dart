@@ -2,7 +2,6 @@
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:intl/intl.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:civic_care/constants/api_service.dart';
 import 'package:civic_care/constants/api_constants.dart';
 
@@ -15,43 +14,22 @@ class NearbyComplaintsPage extends StatefulWidget {
 
 class _NearbyComplaintsPageState extends State<NearbyComplaintsPage> {
   final Dio _dio = ApiClient().dio;
-  final ScrollController _scrollController = ScrollController();
 
   bool _isLoading = false;
-  bool _isLoadingMore = false;
   String? _error;
-
-  int _currentPage = 1;
-  final int _pageSize = 10;
-  bool _hasMore = true;
-
   List<Complaint> _complaints = [];
 
   @override
   void initState() {
     super.initState();
     _fetchComplaints();
-
-    // listen for scroll to bottom
-    _scrollController.addListener(() {
-      if (_scrollController.position.pixels >=
-              _scrollController.position.maxScrollExtent - 200 &&
-          !_isLoadingMore &&
-          _hasMore) {
-        _loadMore();
-      }
-    });
   }
 
-  Future<void> _fetchComplaints({bool reset = true}) async {
-    if (reset) {
-      setState(() {
-        _isLoading = true;
-        _error = null;
-        _currentPage = 1;
-        _hasMore = true;
-      });
-    }
+  Future<void> _fetchComplaints() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
 
     try {
       final response = await _dio.get(
@@ -60,19 +38,13 @@ class _NearbyComplaintsPageState extends State<NearbyComplaintsPage> {
       );
 
       final data = response.data;
-
       List<Complaint> newComplaints = [];
       if (data is List) {
         newComplaints = data.map((e) => Complaint.fromJson(e)).toList();
       }
-      setState(() {
-        if (reset) {
-          _complaints = newComplaints;
-        } else {
-          _complaints.addAll(newComplaints);
-        }
 
-        _hasMore = newComplaints.length >= _pageSize;
+      setState(() {
+        _complaints = newComplaints;
       });
     } on DioException catch (e) {
       String msg = "Failed to fetch complaints.";
@@ -86,22 +58,30 @@ class _NearbyComplaintsPageState extends State<NearbyComplaintsPage> {
       setState(() => _error = "Error: $e");
     } finally {
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _isLoadingMore = false;
-        });
+        setState(() => _isLoading = false);
       }
     }
   }
 
   Future<void> _onRefresh() async {
-    await _fetchComplaints(reset: true);
+    await _fetchComplaints();
   }
 
-  Future<void> _loadMore() async {
-    setState(() => _isLoadingMore = true);
-    _currentPage++;
-    await _fetchComplaints(reset: false);
+  Future<void> _toggleUpvote(Complaint complaint) async {
+    try {
+      await _dio.put(
+        "${baseUrl}core/complaint/",
+        data: {
+          "id": complaint.id,
+        },
+        options: Options(headers: {"Accept": "application/json"}),
+      );
+      await _fetchComplaints();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Failed to update. Try again.")),
+      );
+    }
   }
 
   @override
@@ -112,12 +92,15 @@ class _NearbyComplaintsPageState extends State<NearbyComplaintsPage> {
         actions: [
           IconButton(
             tooltip: "Refresh complaints",
-            onPressed: () async => await _fetchComplaints(reset: true),
+            onPressed: () async => await _fetchComplaints(),
             icon: const Icon(Icons.refresh),
           ),
         ],
       ),
-      body: RefreshIndicator(onRefresh: _onRefresh, child: _buildBody(context)),
+      body: RefreshIndicator(
+        onRefresh: _onRefresh,
+        child: _buildBody(context),
+      ),
     );
   }
 
@@ -130,10 +113,9 @@ class _NearbyComplaintsPageState extends State<NearbyComplaintsPage> {
             padding: const EdgeInsets.all(20),
             child: Text(_error!, style: const TextStyle(color: Colors.red)),
           ),
-          const SizedBox(height: 8),
           Center(
             child: ElevatedButton.icon(
-              onPressed: () => _fetchComplaints(reset: true),
+              onPressed: () => _fetchComplaints(),
               icon: const Icon(Icons.refresh),
               label: const Text("Retry"),
             ),
@@ -162,20 +144,13 @@ class _NearbyComplaintsPageState extends State<NearbyComplaintsPage> {
     }
 
     return ListView.builder(
-      controller: _scrollController,
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-      itemCount: _complaints.length + 1,
+      itemCount: _complaints.length,
       itemBuilder: (context, index) {
-        if (index < _complaints.length) {
-          return ComplaintCard(complaint: _complaints[index]);
-        } else {
-          return _isLoadingMore
-              ? const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              : const SizedBox.shrink();
-        }
+        return ComplaintCard(
+          complaint: _complaints[index],
+          onToggleUpvote: () => _toggleUpvote(_complaints[index]),
+        );
       },
     );
   }
@@ -190,6 +165,8 @@ class Complaint {
   final String? imageUrl;
   final String? address;
   final DateTime createdAt;
+  final bool upvoted;
+  final int upvoteCount;
 
   Complaint({
     required this.id,
@@ -198,6 +175,8 @@ class Complaint {
     this.imageUrl,
     this.address,
     required this.createdAt,
+    required this.upvoted,
+    required this.upvoteCount,
   });
 
   factory Complaint.fromJson(Map<String, dynamic> json) {
@@ -217,9 +196,11 @@ class Complaint {
       id: (json['id'] ?? json['pk'] ?? "").toString(),
       title: (json['title'] ?? json['headline'] ?? "No title").toString(),
       description: (json['description'] ?? json['desc'] ?? "").toString(),
-      imageUrl: json['image_url'] ?? json['image'] ?? json['photo'],
+      imageUrl: json['image'],
       address: (json['address'] ?? json['location_text'])?.toString(),
       createdAt: created,
+      upvoted: json['upvoted'] ?? false,
+      upvoteCount: json['total_upvotes'] ?? 0,
     );
   }
 }
@@ -228,7 +209,8 @@ class Complaint {
 
 class ComplaintCard extends StatelessWidget {
   final Complaint complaint;
-  const ComplaintCard({required this.complaint, super.key});
+  final VoidCallback onToggleUpvote;
+  const ComplaintCard({required this.complaint, required this.onToggleUpvote, super.key});
 
   String _formatDate(DateTime dt) {
     final date = DateFormat.yMMMd().format(dt);
@@ -247,7 +229,7 @@ class ComplaintCard extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildImage(context),
+            _buildImage(),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -256,44 +238,71 @@ class ComplaintCard extends StatelessWidget {
                   Text(
                     complaint.title,
                     style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
+                        fontSize: 16, fontWeight: FontWeight.w600),
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 4),
                   Text(
                     complaint.description,
                     maxLines: 3,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 13),
                   ),
-                  const SizedBox(height: 8),
                   if (complaint.address != null)
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.location_on,
-                          size: 14,
-                          color: Colors.grey,
-                        ),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            complaint.address!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Colors.black54,
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.location_on,
+                              size: 14, color: Colors.grey),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              complaint.address!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 12, color: Colors.black54),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 4),
                   Text(
                     _formatDate(complaint.createdAt),
-                    style: const TextStyle(fontSize: 11, color: Colors.black45),
+                    style:
+                        const TextStyle(fontSize: 11, color: Colors.black45),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: onToggleUpvote,
+                        icon: Icon(
+                          complaint.upvoted
+                              ? Icons.thumb_down
+                              : Icons.thumb_up,
+                          size: 16,
+                        ),
+                        label: Text(
+                            complaint.upvoted ? "Downvote" : "Upvote"),
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 3),
+                          textStyle: const TextStyle(fontSize: 12),
+                          backgroundColor: complaint.upvoted
+                              ? Colors.red
+                              : Colors.blue,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        "${complaint.upvoteCount}",
+                        style: const TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w500),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -304,44 +313,54 @@ class ComplaintCard extends StatelessWidget {
     );
   }
 
-  Widget _buildImage(BuildContext context) {
-    final imageUrl = complaint.imageUrl;
+  Widget _buildImage() {
+    if (complaint.imageUrl == null || complaint.imageUrl!.isEmpty) {
+      return _fallbackImage();
+    }
+
+    final imageUrl = complaint.imageUrl!.startsWith("http")
+        ? complaint.imageUrl!
+        : "$baseUrl${complaint.imageUrl}";
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(8),
       child: SizedBox(
         width: 110,
         height: 90,
-        child: imageUrl == null || imageUrl.isEmpty
-            ? Container(
-                color: Colors.grey[200],
-                child: const Center(
-                  child: Icon(
-                    Icons.image_not_supported_outlined,
-                    size: 36,
-                    color: Colors.grey,
-                  ),
-                ),
-              )
-            : CachedNetworkImage(
-                imageUrl: imageUrl,
-                fit: BoxFit.cover,
-                placeholder: (_, __) => Container(
-                  color: Colors.grey[200],
-                  child: const Center(
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                ),
-                errorWidget: (_, __, ___) => Container(
-                  color: Colors.grey[200],
-                  child: const Center(
-                    child: Icon(
-                      Icons.broken_image,
-                      size: 36,
-                      color: Colors.grey,
-                    ),
-                  ),
-                ),
+        child: Image.network(
+          imageUrl,
+          headers: {
+            "ngrok-skip-browser-warning": "69420",
+          },
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => _fallbackImage(),
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return const Center(
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
               ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _fallbackImage() {
+    return Container(
+      width: 110,
+      height: 90,
+      decoration: BoxDecoration(
+        color: Colors.grey[300],
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: const Icon(
+        Icons.image_not_supported,
+        color: Colors.white54,
+        size: 40,
       ),
     );
   }
