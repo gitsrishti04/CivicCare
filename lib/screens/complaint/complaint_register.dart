@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:dio/dio.dart';
-import 'dart:convert';
 import 'package:civic_care/constants/api_constants.dart';
 import 'package:civic_care/constants/api_service.dart'; // ✅ ApiClient
 
@@ -54,17 +53,18 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
 
   Future<void> _fetchComplaintCategory() async {
     try {
-      final response =
-          await _dio.get("${baseUrl}core/dropdown/", queryParameters: {
-        "uuid": uuid,
-      });
+      final response = await _dio.get(
+        "${baseUrl}core/dropdown/",
+        queryParameters: {"uuid": uuid},
+      );
 
       if (response.statusCode == 200) {
         List<dynamic> data = response.data;
         setState(() {
           _complaintCategory = data
               .map<Map<String, dynamic>>(
-                  (e) => {"id": e["id"], "label": e["label"]})
+                (e) => {"id": e["id"], "label": e["label"]},
+              )
               .toList();
           _isLoadingTypes = false;
         });
@@ -120,19 +120,25 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
       });
 
       if (!kIsWeb && _selectedImage != null) {
-        formData.files.add(MapEntry(
-          "image",
-          await MultipartFile.fromFile(_selectedImage!.path),
-        ));
+        formData.files.add(
+          MapEntry("image", await MultipartFile.fromFile(_selectedImage!.path)),
+        );
       } else if (kIsWeb && _selectedWebImage != null) {
-        formData.files.add(MapEntry(
-          "image",
-          MultipartFile.fromBytes(_selectedWebImage!, filename: "complaint.jpg"),
-        ));
+        formData.files.add(
+          MapEntry(
+            "image",
+            MultipartFile.fromBytes(
+              _selectedWebImage!,
+              filename: "complaint.jpg",
+            ),
+          ),
+        );
       }
 
-      final response =
-          await _dio.post("${baseUrl}core/complaint/", data: formData);
+      final response = await _dio.post(
+        "${baseUrl}core/complaint/",
+        data: formData,
+      );
 
       if (!mounted) return;
       Navigator.of(context).pop(); // close loader
@@ -185,25 +191,58 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
   }
 
   Future<void> _pickImage() async {
-    final ImagePicker picker = ImagePicker();
-    final XFile? pickedFile =
-        await picker.pickImage(source: ImageSource.gallery);
+  final ImagePicker picker = ImagePicker();
 
-    if (pickedFile != null) {
-      if (kIsWeb) {
-        Uint8List bytes = await pickedFile.readAsBytes();
-        setState(() {
-          _selectedWebImage = bytes;
-          _selectedImage = null;
-        });
-      } else {
-        setState(() {
-          _selectedImage = File(pickedFile.path);
-          _selectedWebImage = null;
-        });
-      }
-    }
-  }
+  showDialog(
+    context: context,
+    builder: (ctx) {
+      return AlertDialog(
+        title: const Text("Choose Image Source"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text("Gallery"),
+              onTap: () async {
+                Navigator.of(ctx).pop();
+                final XFile? pickedFile = await picker.pickImage(source: ImageSource.gallery);
+                if (pickedFile != null) {
+                  if (kIsWeb) {
+                    Uint8List bytes = await pickedFile.readAsBytes();
+                    setState(() {
+                      _selectedWebImage = bytes;
+                      _selectedImage = null;
+                    });
+                  } else {
+                    setState(() {
+                      _selectedImage = File(pickedFile.path);
+                      _selectedWebImage = null;
+                    });
+                  }
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text("Camera"),
+              onTap: () async {
+                Navigator.of(ctx).pop();
+                final XFile? pickedFile = await picker.pickImage(source: ImageSource.camera);
+                if (pickedFile != null) {
+                  setState(() {
+                    _selectedImage = File(pickedFile.path);
+                    _selectedWebImage = null; // no camera on web
+                  });
+                }
+              },
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
 
   @override
   Widget build(BuildContext context) {
@@ -272,9 +311,10 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
                       child: const Text(
                         "Cancel",
                         style: TextStyle(
-                            color: Colors.orange,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w500),
+                          color: Colors.orange,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ),
                   ),
@@ -292,9 +332,10 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
                       child: const Text(
                         "Submit",
                         style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w500),
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ),
                   ),
@@ -325,7 +366,12 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
               fontWeight: FontWeight.w500,
             ),
             children: isRequired
-                ? [const TextSpan(text: " *", style: TextStyle(color: Colors.red))]
+                ? [
+                    const TextSpan(
+                      text: " *",
+                      style: TextStyle(color: Colors.red),
+                    ),
+                  ]
                 : [],
           ),
         ),
@@ -334,15 +380,18 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
           controller: controller,
           maxLines: maxLines,
           validator: isRequired
-              ? (value) =>
-                  (value == null || value.trim().isEmpty) ? "$label is required" : null
+              ? (value) => (value == null || value.trim().isEmpty)
+                    ? "$label is required"
+                    : null
               : null,
           decoration: InputDecoration(
             fillColor: Colors.white,
             filled: true,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 12,
+            ),
           ),
         ),
       ],
@@ -357,7 +406,10 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
           onPressed: _isLoadingLocation ? null : _getCurrentLocation,
           icon: _isLoadingLocation
               ? const SizedBox(
-                  width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : const Icon(Icons.my_location, color: Colors.blue),
           label: Text(
             _isLoadingLocation ? "Getting Location..." : "Use Current Location",
@@ -375,7 +427,9 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
             return null;
           },
           decoration: InputDecoration(
-            hintText: _currentAddress.isEmpty ? "Enter address" : _currentAddress,
+            hintText: _currentAddress.isEmpty
+                ? "Enter address"
+                : _currentAddress,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
           ),
         ),
@@ -396,10 +450,12 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
         fillColor: Colors.white,
       ),
       items: _complaintCategory
-          .map((cat) => DropdownMenuItem<Map<String, dynamic>>(
-                value: cat,
-                child: Text(cat["label"]),
-              ))
+          .map(
+            (cat) => DropdownMenuItem<Map<String, dynamic>>(
+              value: cat,
+              child: Text(cat["label"]),
+            ),
+          )
           .toList(),
       onChanged: (value) => setState(() => _selectedComplaintCategory = value),
       validator: (value) =>
@@ -408,35 +464,40 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
   }
 
   Widget _buildAttachmentSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text("Attach Photo", style: TextStyle(fontWeight: FontWeight.w500)),
-        const SizedBox(height: 8),
-        GestureDetector(
-          onTap: _pickImage,
-          child: Container(
-            width: double.infinity,
-            height: 120,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.grey[300]!),
-            ),
-            child: Center(
-              child: _selectedImage != null
-                  ? Image.file(_selectedImage!, fit: BoxFit.cover)
-                  : _selectedWebImage != null
-                      ? Image.memory(_selectedWebImage!, fit: BoxFit.cover)
-                      : Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.add, size: 40, color: Colors.grey[400]),
-                            const SizedBox(height: 8),
-                            Text("Upload Photo",
-                                style: TextStyle(color: Colors.grey[600])),
-                          ],
-                        ),
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Text(
+        "Attach Photo",
+        style: TextStyle(fontWeight: FontWeight.w500),
+      ),
+      const SizedBox(height: 8),
+      GestureDetector(
+        onTap: _pickImage,
+        child: Container(
+          width: double.infinity,
+          height: 120,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.grey[300]!),
+          ),
+          child: Center(
+            child: _selectedImage != null
+                ? Image.file(_selectedImage!, fit: BoxFit.cover)
+                : _selectedWebImage != null
+                    ? Image.memory(_selectedWebImage!, fit: BoxFit.cover)
+                    : Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.add, size: 40, color: Colors.grey[400]),
+                          const SizedBox(height: 8),
+                          Text(
+                            "Upload Photo",
+                            style: TextStyle(color: Colors.grey[600]),
+                          ),
+                        ],
+                      ),
             ),
           ),
         ),
