@@ -191,26 +191,58 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
   }
 
   Future<void> _pickImage() async {
-    final ImagePicker picker = ImagePicker();
-    final XFile? pickedFile = await picker.pickImage(
-      source: ImageSource.gallery,
-    );
+  final ImagePicker picker = ImagePicker();
 
-    if (pickedFile != null) {
-      if (kIsWeb) {
-        Uint8List bytes = await pickedFile.readAsBytes();
-        setState(() {
-          _selectedWebImage = bytes;
-          _selectedImage = null;
-        });
-      } else {
-        setState(() {
-          _selectedImage = File(pickedFile.path);
-          _selectedWebImage = null;
-        });
-      }
-    }
-  }
+  showDialog(
+    context: context,
+    builder: (ctx) {
+      return AlertDialog(
+        title: const Text("Choose Image Source"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text("Gallery"),
+              onTap: () async {
+                Navigator.of(ctx).pop();
+                final XFile? pickedFile = await picker.pickImage(source: ImageSource.gallery);
+                if (pickedFile != null) {
+                  if (kIsWeb) {
+                    Uint8List bytes = await pickedFile.readAsBytes();
+                    setState(() {
+                      _selectedWebImage = bytes;
+                      _selectedImage = null;
+                    });
+                  } else {
+                    setState(() {
+                      _selectedImage = File(pickedFile.path);
+                      _selectedWebImage = null;
+                    });
+                  }
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text("Camera"),
+              onTap: () async {
+                Navigator.of(ctx).pop();
+                final XFile? pickedFile = await picker.pickImage(source: ImageSource.camera);
+                if (pickedFile != null) {
+                  setState(() {
+                    _selectedImage = File(pickedFile.path);
+                    _selectedWebImage = null; // no camera on web
+                  });
+                }
+              },
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
 
   @override
   Widget build(BuildContext context) {
@@ -432,40 +464,40 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
   }
 
   Widget _buildAttachmentSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          "Attach Photo",
-          style: TextStyle(fontWeight: FontWeight.w500),
-        ),
-        const SizedBox(height: 8),
-        GestureDetector(
-          onTap: _pickImage,
-          child: Container(
-            width: double.infinity,
-            height: 120,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.grey[300]!),
-            ),
-            child: Center(
-              child: _selectedImage != null
-                  ? Image.file(_selectedImage!, fit: BoxFit.cover)
-                  : _selectedWebImage != null
-                  ? Image.memory(_selectedWebImage!, fit: BoxFit.cover)
-                  : Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.add, size: 40, color: Colors.grey[400]),
-                        const SizedBox(height: 8),
-                        Text(
-                          "Upload Photo",
-                          style: TextStyle(color: Colors.grey[600]),
-                        ),
-                      ],
-                    ),
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Text(
+        "Attach Photo",
+        style: TextStyle(fontWeight: FontWeight.w500),
+      ),
+      const SizedBox(height: 8),
+      GestureDetector(
+        onTap: _pickImage,
+        child: Container(
+          width: double.infinity,
+          height: 120,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.grey[300]!),
+          ),
+          child: Center(
+            child: _selectedImage != null
+                ? Image.file(_selectedImage!, fit: BoxFit.cover)
+                : _selectedWebImage != null
+                    ? Image.memory(_selectedWebImage!, fit: BoxFit.cover)
+                    : Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.add, size: 40, color: Colors.grey[400]),
+                          const SizedBox(height: 8),
+                          Text(
+                            "Upload Photo",
+                            style: TextStyle(color: Colors.grey[600]),
+                          ),
+                        ],
+                      ),
             ),
           ),
         ),
