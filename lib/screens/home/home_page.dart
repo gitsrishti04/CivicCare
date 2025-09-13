@@ -25,8 +25,6 @@ class _HomePageState extends State<HomePage> {
     _fetchLocation();
   }
 
-  // ...existing code...
-
   Future<void> _fetchLocation() async {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
@@ -77,31 +75,32 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  // ...existing code...
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
     });
 
     switch (index) {
-      case 1: // Complaints tab
+      case 0: // Home
+        break;
+      case 1: // Nearby Complaints
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => RegisterComplaintScreen()),
+          MaterialPageRoute(builder: (context) => const NearbyComplaintsPage()),
         );
         break;
-      case 2: // Communities tab
+      case 2: // Communities
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => CommunityPage()),
+          MaterialPageRoute(builder: (context) => const CommunityPage()),
         );
         break;
-      case 3: // Profile tab
+      case 3: // Profile
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => ProfilePage()),
+          MaterialPageRoute(builder: (context) => const ProfilePage()),
         );
-      // Add navigation for other tabs if needed
+        break;
     }
   }
 
@@ -192,7 +191,7 @@ class _HomePageState extends State<HomePage> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => RegisterComplaintScreen(),
+                          builder: (context) => const RegisterComplaintScreen(),
                         ),
                       );
                     },
@@ -204,7 +203,7 @@ class _HomePageState extends State<HomePage> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => TrackComplaintPage(),
+                          builder: (context) => const TrackComplaintPage(),
                         ),
                       );
                     },
@@ -216,22 +215,9 @@ class _HomePageState extends State<HomePage> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => MyComplaintHistoryPage(),
+                          builder: (context) => const MyComplaintHistoryPage(),
                         ),
                       );
-                    },
-                  ),
-                  _buildBlock(
-                    icon: Icons.list_alt,
-                    title: "Nearby Complaints",
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => NearbyComplaintsPage(),
-                        ),
-                      );
-                      // Navigate to Department List Page
                     },
                   ),
                 ],
@@ -241,30 +227,67 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
 
-      // Bottom Navigation Bar
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selectedIndex,
-        type: BottomNavigationBarType.fixed,
-        selectedItemColor: Colors.blue.shade800,
-        unselectedItemColor: Colors.grey,
-        showUnselectedLabels: true,
-        onTap: _onItemTapped,
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: "Home"),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.report_problem),
-            label: "Complaints",
+      // Floating Button
+      floatingActionButton: FloatingActionButton(
+        shape: const CircleBorder(),
+        backgroundColor: Colors.blue.shade800,
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const RegisterComplaintScreen(),
+            ),
+          );
+        },
+        child: const Icon(Icons.add, color: Colors.white, size: 32),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+
+      // Bottom Navigation with notch
+      bottomNavigationBar: BottomAppBar(
+        shape: const CircularNotchedRectangle(),
+        notchMargin: 8.0,
+        color: Colors.blue.shade800,
+        child: SizedBox(
+          height: 65,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildNavItem(Icons.home, "Home", 0),
+              _buildNavItem(Icons.map, "Nearby", 1),
+              const SizedBox(width: 48), // space for FAB
+              _buildNavItem(Icons.apartment, "Communities", 2),
+              _buildNavItem(Icons.person, "Profile", 3),
+            ],
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.apartment),
-            label: "Communities",
+        ),
+      ),
+    );
+  }
+
+  // bottom nav item widget
+  Widget _buildNavItem(IconData icon, String label, int index) {
+    final isSelected = _selectedIndex == index;
+    return InkWell(
+      onTap: () => _onItemTapped(index),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: isSelected ? Colors.white : Colors.white70),
+          Text(
+            label,
+            style: TextStyle(
+              color: isSelected ? Colors.white : Colors.white70,
+              fontSize: 12,
+            ),
           ),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: "Profile"),
         ],
       ),
     );
   }
 
+  // block widget for grid
   Widget _buildBlock({
     required IconData icon,
     required String title,

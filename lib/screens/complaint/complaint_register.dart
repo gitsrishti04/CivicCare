@@ -1,12 +1,16 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:dio/dio.dart';
 import 'package:civic_care/constants/api_constants.dart';
-import 'package:civic_care/constants/api_service.dart'; // ✅ ApiClient
+import 'package:civic_care/constants/api_service.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:http/http.dart' as http;
 
 class RegisterComplaintScreen extends StatefulWidget {
   const RegisterComplaintScreen({super.key});
@@ -22,80 +26,102 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
   final TextEditingController _descriptionController = TextEditingController();
   final TextEditingController _addressController = TextEditingController();
 
-  Map<String, dynamic>? _selectedComplaintCategory;
-  List<Map<String, dynamic>> _complaintCategory = [];
+  List<Map<String, dynamic>> _complaintCategories = [];
+  bool _isLoadingCategories = true;
 
-  File? _selectedImage; // for mobile
-  Uint8List? _selectedWebImage; // for web
+  Map<String, dynamic>? _selectedCategory;
+  Map<String, dynamic>? _selectedSubcategory;
+  Set<Map<String, String>> _selectedItems = {};
+  Map<String, int>? _selectedItemsId;
+
+  File? _selectedImage;
+  Uint8List? _selectedWebImage;
 
   bool _isLoadingLocation = false;
-  String _currentAddress = '';
-  bool _isLoadingTypes = true;
-
   double? _latitude;
   double? _longitude;
 
-  final Dio _dio = ApiClient().dio; // ✅ use ApiClient
+  final Dio _dio = ApiClient().dio;
+  final MapController _mapController = MapController();
 
   @override
   void initState() {
     super.initState();
-    _fetchComplaintCategory();
+    _fetchComplaintCategories();
   }
 
-  @override
-  void dispose() {
-    _titleController.dispose();
-    _descriptionController.dispose();
-    _addressController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _fetchComplaintCategory() async {
+  Future<void> _fetchComplaintCategories() async {
     try {
       final response = await _dio.get(
         "${baseUrl}core/dropdown/",
-        queryParameters: {"uuid": uuid},
+        queryParameters: {'uuid': uuid},
       );
 
       if (response.statusCode == 200) {
-        List<dynamic> data = response.data;
+        // Parse the response into nested categories
+        List<Map<String, dynamic>> categories = [];
+        for (var category in response.data) {
+          categories.add({
+            'id': category['id'],
+            'category': category['category'],
+            'sub_category': List<Map<String, dynamic>>.from(
+              category['sub_category'].map(
+                (sub) => {
+                  'id': sub['id'],
+                  'category': sub['category'],
+                  'sub_category': sub['sub_category'] != null
+                      ? List<Map<String, dynamic>>.from(sub['sub_category'])
+                      : [],
+                },
+              ),
+            ),
+          });
+        }
+        debugPrint("Fetched categories: $categories");
         setState(() {
-          _complaintCategory = data
-              .map<Map<String, dynamic>>(
-                (e) => {"id": e["id"], "label": e["label"]},
-              )
-              .toList();
-          _isLoadingTypes = false;
+          _complaintCategories = categories;
+          _isLoadingCategories = false;
         });
-      } else {
-        setState(() {
-          _complaintCategory = [];
-          _isLoadingTypes = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Failed to fetch complaint types"),
-            backgroundColor: Colors.red,
-          ),
-        );
       }
     } catch (e) {
-      setState(() {
-        _complaintCategory = [];
-        _isLoadingTypes = false;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Error fetching complaint types: $e"),
-          backgroundColor: Colors.red,
-        ),
-      );
+      setState(() => _isLoadingCategories = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Failed to load categories: $e")));
     }
+  }
+
+  Future<String> _getAddressFromLatLng(double lat, double lon) async {
+    final url =
+        "https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lon";
+    try {
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {"User-Agent": "civic_care_app"},
+      );
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final address = data["display_name"];
+        return "($lat, $lon) - $address";
+      }
+    } catch (e) {
+      return "($lat, $lon)";
+    }
+    return "($lat, $lon)";
   }
 
   Future<void> _submitComplaint() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    if (_selectedItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Please select category and subcategory"),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
 
     showDialog(
       context: context,
@@ -106,9 +132,8 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
     try {
       final title = _titleController.text.trim();
       final description = _descriptionController.text.trim();
-      final address = _addressController.text.trim().isNotEmpty
-          ? _addressController.text.trim()
-          : _currentAddress;
+      final address = _addressController.text.trim();
+      debugPrint("Submitting complaint:$_selectedItems");
 
       final formData = FormData.fromMap({
         "title": title,
@@ -116,7 +141,7 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
         "longitude": _longitude?.toString() ?? "",
         "latitude": _latitude?.toString() ?? "",
         "address": address,
-        "category": _selectedComplaintCategory?["id"].toString() ?? "",
+        "category": _selectedItemsId?['category'].toString(),
       });
 
       if (!kIsWeb && _selectedImage != null) {
@@ -141,7 +166,7 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
       );
 
       if (!mounted) return;
-      Navigator.of(context).pop(); // close loader
+      Navigator.of(context).pop();
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -150,7 +175,7 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
             backgroundColor: Colors.green,
           ),
         );
-        Navigator.of(context).pop(); // go back
+        Navigator.of(context).pop();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -173,93 +198,57 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
       Position position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
+      _latitude = position.latitude;
+      _longitude = position.longitude;
+
+      // reverse geocode
+      final formattedAddress = await _getAddressFromLatLng(
+        _latitude!,
+        _longitude!,
+      );
+
       setState(() {
-        _latitude = position.latitude;
-        _longitude = position.longitude;
         _isLoadingLocation = false;
-        _addressController.text = "Lat: $_latitude, Lon: $_longitude";
+        _addressController.text = formattedAddress;
+      });
+
+      // Move map
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _mapController.move(LatLng(_latitude!, _longitude!), 16);
       });
     } catch (e) {
       setState(() => _isLoadingLocation = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Failed to get location: $e"),
-          backgroundColor: Colors.red,
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Failed to get location: $e")));
     }
   }
 
   Future<void> _pickImage() async {
-  final ImagePicker picker = ImagePicker();
-
-  showDialog(
-    context: context,
-    builder: (ctx) {
-      return AlertDialog(
-        title: const Text("Choose Image Source"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: const Text("Gallery"),
-              onTap: () async {
-                Navigator.of(ctx).pop();
-                final XFile? pickedFile = await picker.pickImage(source: ImageSource.gallery);
-                if (pickedFile != null) {
-                  if (kIsWeb) {
-                    Uint8List bytes = await pickedFile.readAsBytes();
-                    setState(() {
-                      _selectedWebImage = bytes;
-                      _selectedImage = null;
-                    });
-                  } else {
-                    setState(() {
-                      _selectedImage = File(pickedFile.path);
-                      _selectedWebImage = null;
-                    });
-                  }
-                }
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.camera_alt),
-              title: const Text("Camera"),
-              onTap: () async {
-                Navigator.of(ctx).pop();
-                final XFile? pickedFile = await picker.pickImage(source: ImageSource.camera);
-                if (pickedFile != null) {
-                  setState(() {
-                    _selectedImage = File(pickedFile.path);
-                    _selectedWebImage = null; // no camera on web
-                  });
-                }
-              },
-            ),
-          ],
-        ),
-      );
-    },
-  );
-}
+    final ImagePicker picker = ImagePicker();
+    final XFile? pickedFile = await picker.pickImage(
+      source: ImageSource.gallery,
+    );
+    if (pickedFile != null) {
+      if (kIsWeb) {
+        Uint8List bytes = await pickedFile.readAsBytes();
+        setState(() {
+          _selectedWebImage = bytes;
+          _selectedImage = null;
+        });
+      } else {
+        setState(() {
+          _selectedImage = File(pickedFile.path);
+          _selectedWebImage = null;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[50],
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 1,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-        title: const Text(
-          "Register Complaint",
-          style: TextStyle(color: Colors.black, fontSize: 18),
-        ),
-      ),
+      appBar: AppBar(title: const Text("Register Complaint")),
       body: Form(
         key: _formKey,
         child: Column(
@@ -282,64 +271,184 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
                       maxLines: 4,
                       isRequired: true,
                     ),
-                    const SizedBox(height: 20),
-                    _buildAddressSection(),
-                    const SizedBox(height: 20),
-                    _buildComplaintTypeDropdown(),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 16),
+
+                    // ✅ Category + Subcategory
+                    Text(
+                      "Complaint Category",
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _isLoadingCategories
+                        ? const Center(child: CircularProgressIndicator())
+                        : Column(
+                            children: [
+                              DropdownButtonFormField<Map<String, dynamic>>(
+                                decoration: const InputDecoration(
+                                  labelText: "Select Category",
+                                  border: OutlineInputBorder(),
+                                ),
+                                value: _selectedCategory,
+                                items: _complaintCategories.map((category) {
+                                  return DropdownMenuItem(
+                                    value: category,
+                                    child: Text(category['category']),
+                                  );
+                                }).toList(),
+                                onChanged: (value) {
+                                  setState(() {
+                                    _selectedCategory = value;
+                                    _selectedSubcategory = null;
+                                  });
+                                },
+                              ),
+                              const SizedBox(height: 12),
+                              if (_selectedCategory != null)
+                                DropdownButtonFormField<Map<String, dynamic>>(
+                                  decoration: const InputDecoration(
+                                    labelText: "Select Subcategory",
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  value: _selectedSubcategory,
+                                  items:
+                                      List<Map<String, dynamic>>.from(
+                                        _selectedCategory?['sub_category'] ??
+                                            [],
+                                      ).map((subcat) {
+                                        return DropdownMenuItem(
+                                          value: subcat,
+                                          child: Text(subcat['category']),
+                                        );
+                                      }).toList(),
+                                  onChanged: (value) {
+                                    setState(() {
+                                      _selectedSubcategory = value;
+                                      _selectedItemsId = {
+                                        "category":
+                                            _selectedSubcategory?['id'] ?? 31,
+                                      };
+                                      _selectedItems = {
+                                        {
+                                          "category":
+                                              _selectedCategory?['category'] ??
+                                              "",
+                                          "sub_category":
+                                              _selectedSubcategory?['category'] ??
+                                              "",
+                                        },
+                                      };
+                                    });
+                                  },
+                                ),
+                            ],
+                          ),
+                    if (_selectedItems.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.blueAccent),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          _selectedItems
+                              .map(
+                                (e) =>
+                                    "${e['category']} - ${e['sub_category']}",
+                              )
+                              .join(", "),
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+
+                    // ✅ Map
+                    SizedBox(
+                      height: 200,
+                      child: FlutterMap(
+                        mapController: _mapController,
+                        options: MapOptions(
+                          initialCenter: LatLng(
+                            _latitude ?? 28.7041,
+                            _longitude ?? 77.1025,
+                          ),
+                          initialZoom: _latitude != null ? 16 : 13,
+                          interactionOptions: const InteractionOptions(
+                            flags:
+                                InteractiveFlag.pinchZoom |
+                                InteractiveFlag.drag,
+                          ),
+                        ),
+                        children: [
+                          TileLayer(
+                            urlTemplate:
+                                "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+                            subdomains: const ['a', 'b', 'c'],
+                            userAgentPackageName: 'com.example.civic_care',
+                          ),
+                          if (_latitude != null && _longitude != null)
+                            MarkerLayer(
+                              markers: [
+                                Marker(
+                                  point: LatLng(_latitude!, _longitude!),
+                                  width: 60,
+                                  height: 60,
+                                  child: const Icon(
+                                    Icons.location_on,
+                                    size: 40,
+                                    color: Colors.red,
+                                  ),
+                                ),
+                              ],
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    OutlinedButton.icon(
+                      onPressed: _isLoadingLocation
+                          ? null
+                          : _getCurrentLocation,
+                      icon: const Icon(Icons.my_location),
+                      label: Text(
+                        _isLoadingLocation
+                            ? "Getting location..."
+                            : "Use Current Location",
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+
+                    TextFormField(
+                      controller: _addressController,
+                      maxLines: 2,
+                      decoration: const InputDecoration(
+                        labelText: "Address",
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
                     _buildAttachmentSection(),
-                    const SizedBox(height: 20),
                   ],
                 ),
               ),
             ),
-            Container(
+            Padding(
               padding: const EdgeInsets.all(16),
-              color: Colors.white,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        side: const BorderSide(color: Colors.orange),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      child: const Text(
-                        "Cancel",
-                        style: TextStyle(
-                          color: Colors.orange,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: _submitComplaint,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      child: const Text(
-                        "Submit",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+              child: ElevatedButton(
+                onPressed: _submitComplaint,
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 48),
+                ),
+                child: const Text("Submit Complaint"),
               ),
             ),
           ],
@@ -354,151 +463,50 @@ class _RegisterComplaintScreenState extends State<RegisterComplaintScreen> {
     int maxLines = 1,
     bool isRequired = false,
   }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        RichText(
-          text: TextSpan(
-            text: label,
-            style: TextStyle(
-              color: Colors.grey[600],
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-            ),
-            children: isRequired
-                ? [
-                    const TextSpan(
-                      text: " *",
-                      style: TextStyle(color: Colors.red),
-                    ),
-                  ]
-                : [],
-          ),
-        ),
-        const SizedBox(height: 8),
-        TextFormField(
-          controller: controller,
-          maxLines: maxLines,
-          validator: isRequired
-              ? (value) => (value == null || value.trim().isEmpty)
-                    ? "$label is required"
-                    : null
-              : null,
-          decoration: InputDecoration(
-            fillColor: Colors.white,
-            filled: true,
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 12,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildAddressSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        OutlinedButton.icon(
-          onPressed: _isLoadingLocation ? null : _getCurrentLocation,
-          icon: _isLoadingLocation
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.my_location, color: Colors.blue),
-          label: Text(
-            _isLoadingLocation ? "Getting Location..." : "Use Current Location",
-          ),
-        ),
-        const SizedBox(height: 12),
-        TextFormField(
-          controller: _addressController,
-          maxLines: 3,
-          validator: (value) {
-            if ((value == null || value.trim().isEmpty) &&
-                _currentAddress.isEmpty) {
-              return "Address is required";
-            }
-            return null;
-          },
-          decoration: InputDecoration(
-            hintText: _currentAddress.isEmpty
-                ? "Enter address"
-                : _currentAddress,
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildComplaintTypeDropdown() {
-    if (_isLoadingTypes) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    return DropdownButtonFormField<Map<String, dynamic>>(
-      value: _selectedComplaintCategory,
+    return TextFormField(
+      controller: controller,
+      maxLines: maxLines,
+      validator: isRequired
+          ? (value) => (value == null || value.trim().isEmpty)
+                ? "$label is required"
+                : null
+          : null,
       decoration: InputDecoration(
-        labelText: "Complaint Category *",
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-        filled: true,
-        fillColor: Colors.white,
+        labelText: label,
+        border: const OutlineInputBorder(),
       ),
-      items: _complaintCategory
-          .map(
-            (cat) => DropdownMenuItem<Map<String, dynamic>>(
-              value: cat,
-              child: Text(cat["label"]),
-            ),
-          )
-          .toList(),
-      onChanged: (value) => setState(() => _selectedComplaintCategory = value),
-      validator: (value) =>
-          value == null ? "Please select complaint category" : null,
     );
   }
 
   Widget _buildAttachmentSection() {
-  return Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      const Text(
-        "Attach Photo",
-        style: TextStyle(fontWeight: FontWeight.w500),
-      ),
-      const SizedBox(height: 8),
-      GestureDetector(
-        onTap: _pickImage,
-        child: Container(
-          width: double.infinity,
-          height: 120,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.grey[300]!),
-          ),
-          child: Center(
-            child: _selectedImage != null
-                ? Image.file(_selectedImage!, fit: BoxFit.cover)
-                : _selectedWebImage != null
-                    ? Image.memory(_selectedWebImage!, fit: BoxFit.cover)
-                    : Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.add, size: 40, color: Colors.grey[400]),
-                          const SizedBox(height: 8),
-                          Text(
-                            "Upload Photo",
-                            style: TextStyle(color: Colors.grey[600]),
-                          ),
-                        ],
-                      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          "Attach Photo",
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        GestureDetector(
+          onTap: _pickImage,
+          child: Container(
+            height: 150,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: Colors.grey[200],
+              borderRadius: BorderRadius.circular(8),
             ),
+            child: _selectedImage != null
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.file(_selectedImage!, fit: BoxFit.cover),
+                  )
+                : _selectedWebImage != null
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.memory(_selectedWebImage!, fit: BoxFit.cover),
+                  )
+                : const Center(child: Icon(Icons.add_a_photo, size: 40)),
           ),
         ),
       ],
